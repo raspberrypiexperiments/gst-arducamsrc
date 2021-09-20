@@ -1,3 +1,0 @@
-[submodule "MIPI_Camera"]
-	path = MIPI_Camera
-	url = https://github.com/ArduCAM/MIPI_Camera.git
