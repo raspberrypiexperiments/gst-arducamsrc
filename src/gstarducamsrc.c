@@ -581,7 +581,8 @@ raw_callback (BUFFER *buffer)
   GstBuffer *buf;
   GstArduCamSrc *src = buffer->userdata;
   g_mutex_lock (&src->buffer.lock.gst);
-  if(!src->buffer.pointer) {
+  if(!src->buffer.pointer) 
+  {
     g_cond_wait (&src->buffer.lock.gst_cond, &src->buffer.lock.gst);
   }
   g_mutex_unlock (&src->buffer.lock.gst);
@@ -590,7 +591,9 @@ raw_callback (BUFFER *buffer)
   if (src->started) {
     buf = gst_buffer_new_allocate (NULL, buffer->length, NULL);
     gst_buffer_fill (buf, 0, buffer->data, buffer->length);
-    *(src->buffer.pointer) = buf;
+    g_mutex_lock (&src->buffer.lock.gst);
+    if (src->buffer.pointer) *(src->buffer.pointer) = buf;
+    g_mutex_unlock (&src->buffer.lock.gst);
   }
   g_cond_signal (&src->buffer.lock.ardu_cond);
   g_mutex_unlock (&src->buffer.lock.ardu);
@@ -601,10 +604,13 @@ static GstFlowReturn
 gst_ardu_cam_src_create (GstPushSrc * parent, GstBuffer ** buf)
 {
   GstArduCamSrc *src = GST_ARDUCAMSRC (parent);
-  GstFlowReturn ret = GST_FLOW_OK;
   if (!src->started) {
     src->started = TRUE;
-    arducam_set_raw_callback (src->camera_instance, raw_callback, src);
+    if (arducam_set_raw_callback (src->camera_instance, raw_callback, src)) {
+      GST_ERROR_OBJECT(src, "Failed to start streaming");
+      src->started = FALSE;
+      return GST_FLOW_ERROR;
+    }
   }
   if (src->started) {
     g_mutex_lock (&src->config.lock);
@@ -673,7 +679,7 @@ gst_ardu_cam_src_create (GstPushSrc * parent, GstBuffer ** buf)
     g_mutex_unlock (&src->buffer.lock.gst);
     g_mutex_unlock (&src->buffer.lock.ardu);
   }
-  return ret;
+  return GST_FLOW_OK;
 }
 
 static gboolean
