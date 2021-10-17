@@ -98,11 +98,6 @@ struct _GstArduCamSrc
 
   gboolean started;
 
-  /*GstBuffer **buf;
-  GMutex lock1;
-  GCond cond1;
-  GMutex lock2;
-  GCond cond2;*/
   ArduCamBuffer buffer;
 
   gchar name[16];

@@ -73,7 +73,7 @@ enum
   "width = (int) { 160, 320, 640, 1280 }," \
   "height = (int) { 100, 200, 400, 720, 800 }," \
   "format = (string) GRAY8," \
-  "framerate = (fraction) { 60, 210, 420, 480 }, " \
+  "framerate = (fraction) [ 0, 480 ], " \
   "sensor-mode = (int) [ -1, 22 ] "
 
 static GstStaticPadTemplate src_template = GST_STATIC_PAD_TEMPLATE ("src",
@@ -239,13 +239,13 @@ gst_ardu_cam_src_class_init (GstArduCamSrcClass * klass)
       g_param_spec_string ("sensor-name", "Sensor Name", "Gets sensor name",
           NULL, G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
   g_object_class_install_property (gobject_class, PROP_WIDTH,
-      g_param_spec_int ("width", "Width", "Set or get image width",
+      g_param_spec_int ("width", "Width", "Get image width",
           160, 1280, WIDTH_DEFAULT, G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
   g_object_class_install_property (gobject_class, PROP_HEIGHT,
-      g_param_spec_int ("height", "Height", "Set or get image height",
+      g_param_spec_int ("height", "Height", "Get image height",
           100, 800, HEIGHT_DEFAULT, G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
   g_object_class_install_property (gobject_class, PROP_SENSOR_MODE,
-      g_param_spec_enum ("sensor-mode", "Sesnor Mode", "Set or get sensor mode",
+      g_param_spec_enum ("sensor-mode", "Sesnor Mode", "Get sensor mode",
           gst_ardu_cam_src_sensor_mode_get_type(), 
           GST_ARDU_CAM_SRC_SENSOR_MODE_AUTOMATIC,
           G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
@@ -332,9 +332,6 @@ static void
 gst_ardu_cam_src_finalize (GObject *object)
 {
   GstArduCamSrc *src = GST_ARDUCAMSRC (object);
-  g_mutex_clear (&src->config.lock);
-  g_mutex_clear (&src->buffer.lock.ardu);
-  g_mutex_clear (&src->buffer.lock.gst);
   if (arducam_close_camera (src->camera_instance)) {
     GST_WARNING_OBJECT (src, "failed to close the camera");
   }
@@ -583,41 +580,20 @@ raw_callback (BUFFER *buffer)
 {
   GstBuffer *buf;
   GstArduCamSrc *src = buffer->userdata;
-  
-  if (src->started) { 
-    // g_mutex_lock(&(src->lock2));
-    // if(!src->buf) {
-    //   g_cond_wait (&(src->cond2), &(src->lock2));
-    // }
-    // if (src->started) { 
-    //   g_mutex_lock(&(src->lock1));
-    //   if (src->started) {
-    //     buf = gst_buffer_new_allocate(NULL, buffer->length, NULL);
-    //     gst_buffer_fill(buf, 0, buffer->data, buffer->length);
-    //     *(src->buf) = buf;
-    //   }
-    //   g_cond_signal (&(src->cond1));
-    //   g_mutex_unlock(&(src->lock1));
-    // }
-    // g_mutex_unlock(&(src->lock2));
-    g_mutex_lock (&src->buffer.lock.gst);
-    if(!src->buffer.pointer) {
-      g_cond_wait (&src->buffer.lock.gst_cond, &src->buffer.lock.gst);
-    }
-    g_mutex_unlock (&src->buffer.lock.gst);
-    if (src->started) { 
-      g_mutex_lock (&src->buffer.lock.ardu);
-      if (src->started) {
-        buf = gst_buffer_new_allocate (NULL, buffer->length, NULL);
-        gst_buffer_fill (buf, 0, buffer->data, buffer->length);
-        *(src->buffer.pointer) = buf;
-      }
-      g_cond_signal (&src->buffer.lock.ardu_cond);
-      g_mutex_unlock (&src->buffer.lock.ardu);
-    }
-    
-
+  g_mutex_lock (&src->buffer.lock.gst);
+  if(!src->buffer.pointer) {
+    g_cond_wait (&src->buffer.lock.gst_cond, &src->buffer.lock.gst);
   }
+  g_mutex_unlock (&src->buffer.lock.gst);
+  g_mutex_lock (&src->buffer.lock.ardu);
+  // NOTE(marcin.sielski): required while stopping
+  if (src->started) {
+    buf = gst_buffer_new_allocate (NULL, buffer->length, NULL);
+    gst_buffer_fill (buf, 0, buffer->data, buffer->length);
+    *(src->buffer.pointer) = buf;
+  }
+  g_cond_signal (&src->buffer.lock.ardu_cond);
+  g_mutex_unlock (&src->buffer.lock.ardu);
   return 0;
 }
 
@@ -686,24 +662,15 @@ gst_ardu_cam_src_create (GstPushSrc * parent, GstBuffer ** buf)
       src->config.change_flags = 0;
     }
     g_mutex_unlock(&src->config.lock);   
-
-    // g_mutex_lock(&(src->lock1));
-    // g_mutex_lock(&(src->lock2));
-    // src->buf = buf;
-    // g_cond_signal(&(src->cond2));
-    // g_mutex_unlock(&(src->lock2));
-    // g_cond_wait (&(src->cond1), &(src->lock1));
-    // src->buf = NULL;
-    // g_mutex_unlock(&(src->lock1));
-
-    
     g_mutex_lock (&src->buffer.lock.gst);
     src->buffer.pointer = buf;
     g_cond_signal (&src->buffer.lock.gst_cond);
     g_mutex_unlock (&src->buffer.lock.gst);
     g_mutex_lock (&src->buffer.lock.ardu);
     g_cond_wait (&src->buffer.lock.ardu_cond, &src->buffer.lock.ardu);
+    g_mutex_lock (&src->buffer.lock.gst);
     src->buffer.pointer = NULL;
+    g_mutex_unlock (&src->buffer.lock.gst);
     g_mutex_unlock (&src->buffer.lock.ardu);
   }
   return ret;
@@ -719,7 +686,6 @@ static gboolean
 gst_ardu_cam_src_stop (GstBaseSrc * parent)
 {
   GstArduCamSrc *src = GST_ARDUCAMSRC (parent);
-
   src->started = FALSE;
   src->buffer.pointer = NULL;  
   g_cond_signal (&src->buffer.lock.gst_cond);
