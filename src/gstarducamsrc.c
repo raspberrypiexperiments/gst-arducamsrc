@@ -580,23 +580,27 @@ raw_callback (BUFFER *buffer)
 {
   GstBuffer *buf;
   GstArduCamSrc *src = buffer->userdata;
+  
   g_mutex_lock (&src->buffer.lock.gst);
-  if(!src->buffer.pointer) 
-  {
-    g_cond_wait (&src->buffer.lock.gst_cond, &src->buffer.lock.gst);
-  }
+    if(!src->buffer.pointer) 
+    {
+      g_cond_wait (&src->buffer.lock.gst_cond, &src->buffer.lock.gst);
+    }
   g_mutex_unlock (&src->buffer.lock.gst);
-  g_mutex_lock (&src->buffer.lock.ardu);
-  // NOTE(marcin.sielski): required while stopping
-  if (src->started) {
-    buf = gst_buffer_new_allocate (NULL, buffer->length, NULL);
-    gst_buffer_fill (buf, 0, buffer->data, buffer->length);
-    g_mutex_lock (&src->buffer.lock.gst);
-    if (src->buffer.pointer) *(src->buffer.pointer) = buf;
-    g_mutex_unlock (&src->buffer.lock.gst);
-  }
-  g_cond_signal (&src->buffer.lock.ardu_cond);
-  g_mutex_unlock (&src->buffer.lock.ardu);
+
+  g_mutex_lock (&src->buffer.lock.gst);
+    g_mutex_lock (&src->buffer.lock.ardu);
+      // NOTE(marcin.sielski): required while stopping
+      if (src->started && src->buffer.pointer)
+      { 
+        buf = gst_buffer_new_allocate (NULL, buffer->length, NULL);
+        gst_buffer_fill (buf, 0, buffer->data, buffer->length);
+        *(src->buffer.pointer) = buf;
+      }
+      g_cond_signal (&src->buffer.lock.ardu_cond);
+    g_mutex_unlock (&src->buffer.lock.ardu);
+    g_cond_wait (&src->buffer.lock.gst_cond, &src->buffer.lock.gst);
+  g_mutex_unlock (&src->buffer.lock.gst);
   return 0;
 }
 
@@ -667,16 +671,18 @@ gst_ardu_cam_src_create (GstPushSrc * parent, GstBuffer ** buf)
       }
       src->config.change_flags = 0;
     }
-    g_mutex_unlock(&src->config.lock);   
+    g_mutex_unlock(&src->config.lock); 
+
     g_mutex_lock (&src->buffer.lock.gst);
-    src->buffer.pointer = buf;
-    g_cond_signal (&src->buffer.lock.gst_cond);
+      src->buffer.pointer = buf;
+      g_cond_signal (&src->buffer.lock.gst_cond);
     g_mutex_unlock (&src->buffer.lock.gst);
+
     g_mutex_lock (&src->buffer.lock.ardu);
-    g_cond_wait (&src->buffer.lock.ardu_cond, &src->buffer.lock.ardu);
-    g_mutex_lock (&src->buffer.lock.gst);
-    src->buffer.pointer = NULL;
-    g_mutex_unlock (&src->buffer.lock.gst);
+      g_cond_wait (&src->buffer.lock.ardu_cond, &src->buffer.lock.ardu);
+      g_mutex_lock (&src->buffer.lock.gst);
+        src->buffer.pointer = NULL;
+      g_mutex_unlock (&src->buffer.lock.gst);
     g_mutex_unlock (&src->buffer.lock.ardu);
   }
   return GST_FLOW_OK;
