@@ -53,7 +53,7 @@ typedef enum
   PROP_CHANGE_GAIN             = (1 << 3),
   PROP_CHANGE_EXTERNAL_TRIGGER = (1 << 4),
   PROP_CHANGE_AUTO_EXPOSURE    = (1 << 5),
-  PROP_CHANGE_ORIENTATION      = (1 << 6),
+  PROP_CHANGE_ORIENTATION      = (1 << 6)
 } ArduCamPropChangeFlags;
 
 typedef struct
@@ -68,37 +68,13 @@ typedef struct
   gboolean auto_exposure;
   GstVideoOrientationMethod orientation;
   gint rotation;
+  gint timeout;
 }
 ArduCamConfig;
-
-
-typedef struct
-{
-  GMutex ardu;
-  GCond ardu_cond;
-  GMutex gst;
-  GCond gst_cond;
-}
-ArduCamBufferLock;
-
-typedef struct 
-{
-  GstBuffer **pointer;
-  ArduCamBufferLock lock;
-}
-ArduCamBuffer;
 
 struct _GstArduCamSrc
 {
   GstPushSrc parent;
-
-  GstPad *srcpad;
-
-  CAMERA_INSTANCE camera_instance;
-
-  gboolean started;
-
-  ArduCamBuffer buffer;
 
   gchar name[16];
   gint width;

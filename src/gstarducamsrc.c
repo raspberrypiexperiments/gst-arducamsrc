@@ -29,6 +29,7 @@
 #define _GNU_SOURCE
 #include <gst/video/video.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <linux/v4l2-controls.h> 
 #include <unistd.h>
 #include "gstarducamsrc.h"
@@ -50,7 +51,8 @@ enum
   PROP_EXTERNAL_TRIGGER,
   PROP_AUTO_EXPOSURE,
   PROP_ROTATION,
-  PROP_VIDEO_DIRECTION
+  PROP_VIDEO_DIRECTION,
+  PROP_TIMEOUT
 };
 
 #define WIDTH_DEFAULT 160
@@ -60,8 +62,9 @@ enum
 #define EXPOSURE_DEFAULT 681
 #define GAIN_DEFAULT 1
 #define EXTERNAL_TRIGGER_DEFAULT FALSE
-#define AUTO_EXPOSURE_DEFAULT FALSE
+#define AUTO_EXPOSURE_DEFAULT TRUE
 #define ROTATION_DEFAULT 0
+#define TIMEOUT_DEFAULT 1000
 
 /* the capabilities of the inputs and outputs.
  *
@@ -74,7 +77,8 @@ enum
   "height = (int) { 100, 200, 400, 720, 800 }," \
   "format = (string) GRAY8," \
   "framerate = (fraction) [ 0, 480 ], " \
-  "sensor-mode = (int) [ -1, 22 ] "
+  "sensor-mode = (int) [ -1, 22 ], " \
+  "timeout = (int) [ -1, max ] "
 
 static GstStaticPadTemplate src_template = GST_STATIC_PAD_TEMPLATE ("src",
     GST_PAD_SRC,
@@ -96,7 +100,6 @@ static gboolean gst_ardu_cam_src_start (GstBaseSrc * parent);
 static gboolean gst_ardu_cam_src_stop (GstBaseSrc * parent);
 static gboolean gst_ardu_cam_src_decide_allocation (GstBaseSrc * src,
     GstQuery * query);
-static int raw_callback (BUFFER *buffer);
 static void gst_ardu_cam_src_orientation_init (
     GstVideoOrientationInterface * iface);
 static void gst_ardu_cam_src_direction_init (
@@ -141,16 +144,16 @@ gst_ardu_cam_src_sensor_mode_get_type (void)
         "1280x800 Y10P 480fps 2lanes"},
     {C_ENUM (GST_ARDU_CAM_SRC_SENSOR_MODE_1280x800_GREY_60FPS_1LANE_ETM),
         "GST_ARDU_CAM_SRC_SENSOR_MODE_1280x800_GREY_60FPS_1LANE_ETM", 
-        "1280x800 GREY 60fps 1lanes ETM"},
+        "1280x800 GREY 60fps 1lane ETM"},
     {C_ENUM (GST_ARDU_CAM_SRC_SENSOR_MODE_1280x720_GREY_60FPS_1LANE_ETM),
         "GST_ARDU_CAM_SRC_SENSOR_MODE_1280x720_GREY_60FPS_1LANE_ETM", 
-        "1280x720 GREY 60fps 1lanes ETM"},
+        "1280x720 GREY 60fps 1lane ETM"},
     {C_ENUM (GST_ARDU_CAM_SRC_SENSOR_MODE_640x400_GREY_60FPS_1LANE_ETM),
         "GST_ARDU_CAM_SRC_SENSOR_MODE_640x400_GREY_60FPS_1LANE_ETM", 
-        "640x400 GREY 60fps 1lanes ETM"},
+        "640x400 GREY 60fps 1lane ETM"},
     {C_ENUM (GST_ARDU_CAM_SRC_SENSOR_MODE_320x200_GREY_60FPS_1LANE_ETM),
         "GST_ARDU_CAM_SRC_SENSOR_MODE_320x200_GREY_60FPS_1LANE_ETM", 
-        "320x200 GREY 60fps 1lanes ETM"},
+        "320x200 GREY 60fps 1lane ETM"},
     {C_ENUM (GST_ARDU_CAM_SRC_SENSOR_MODE_1280x800_GREY_60FPS_2LANES_ETM),
         "GST_ARDU_CAM_SRC_SENSOR_MODE_1280x800_GREY_60FPS_2LANES_ETM", 
         "1280x800 GREY 60fps 2lanes ETM"},
@@ -200,6 +203,22 @@ gst_ardu_cam_src_sensor_mode_get_type (void)
   return id;
 }
 
+IMAGE_FORMAT image_format = {IMAGE_ENCODING_RAW_BAYER, 100};
+static CAMERA_INSTANCE camera_instance = NULL;
+
+static void 
+gst_ardu_cam_src_atexit (void)
+{
+  GST_LOG ("gst_ardu_cam_src_atexit entry");
+  if (camera_instance)
+  {
+    if (arducam_close_camera (camera_instance))
+    {
+      GST_WARNING ("Failed to close camera");
+    }
+  }
+  GST_LOG ("gst_ardu_cam_src_atexit exit");
+}
 
 /* GObject vmethod implementations */
 
@@ -283,37 +302,52 @@ gst_ardu_cam_src_class_init (GstArduCamSrcClass * klass)
           G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE | G_PARAM_STATIC_STRINGS));
     g_object_class_override_property (gobject_class, PROP_VIDEO_DIRECTION,
       "video-direction");
+  g_object_class_install_property (gobject_class, PROP_TIMEOUT,
+      g_param_spec_int ("timeout", "Timeout", "Set or get frame capture timeout",
+          0, G_MAXINT, TIMEOUT_DEFAULT, 
+          G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE | G_PARAM_STATIC_STRINGS));
+
+    atexit (gst_ardu_cam_src_atexit);
 }
+
 
 static void
 gst_ardu_cam_src_init (GstArduCamSrc * src)
 {
+  g_return_if_fail (src != NULL);
+
+  GST_LOG_OBJECT (src, "gst_ardu_cam_src_init entry");
+
   gst_base_src_set_format (GST_BASE_SRC (src), GST_FORMAT_TIME);
   gst_base_src_set_live (GST_BASE_SRC (src), TRUE);
   gst_base_src_set_do_timestamp (GST_BASE_SRC (src), TRUE);
 
-  gint stdout_bk;
-  stdout_bk = dup (fileno (stderr));
-  gint pipefd[2];
-  pipe2 (pipefd, 0);
-  dup2 (pipefd[1], fileno (stderr));
-  arducam_init_camera (&src->camera_instance);
-  fflush (stderr);
-  close (pipefd[1]);
-  dup2 (stdout_bk, fileno (stderr));
-  gchar ch = 0;
-  gint i = 0;
-  do {
-    read (pipefd[0], &ch, 1);
-    if (i >= 13) {
-      src->name[i-13] = ch;
-    }
-    i++;
-  } while(!(ch == ' ' && i > 13 && i < 30));
-  src->name[i-13-1] = 0;
+  if (!camera_instance)
+  {
+    gint stdout_bk;
+    stdout_bk = dup (fileno (stderr));
+    gint pipefd[2];
+    pipe2 (pipefd, 0);
+    dup2 (pipefd[1], fileno (stderr));
+    arducam_init_camera (&camera_instance);
+    fflush (stderr);
+    close (pipefd[1]);
+    dup2 (stdout_bk, fileno (stderr));
+    gchar ch = 0;
+    gint i = 0;
+    do {
+      read (pipefd[0], &ch, 1);
+      if (i >= 13) {
+        src->name[i-13] = ch;
+      }
+      i++;
+    } while(!(ch == ' ' && i > 13 && i < 30));
+    src->name[i-13-1] = 0;
+  }
+
   src->width = WIDTH_DEFAULT;
   src->height = HEIGHT_DEFAULT;
-  g_mutex_init (&src->config.lock);
+  
   src->config.change_flags = 0;
   src->config.hflip = HFLIP_DEFAULT;
   src->config.vflip = VFLIP_DEFAULT;
@@ -323,24 +357,32 @@ gst_ardu_cam_src_init (GstArduCamSrc * src)
   src->config.external_trigger = EXTERNAL_TRIGGER_DEFAULT;
   src->config.auto_exposure = AUTO_EXPOSURE_DEFAULT;
   src->config.rotation = ROTATION_DEFAULT;
+  src->config.timeout = TIMEOUT_DEFAULT;
 
-  g_mutex_init (&src->buffer.lock.ardu);
-  g_mutex_init (&src->buffer.lock.gst);
+  src->config.change_flags |= PROP_CHANGE_AUTO_EXPOSURE;
+
+  GST_LOG_OBJECT (src, "gst_ardu_cam_src_init exit");
 }
+
+
 
 static void
 gst_ardu_cam_src_finalize (GObject *object)
 {
   GstArduCamSrc *src = GST_ARDUCAMSRC (object);
-  if (arducam_close_camera (src->camera_instance)) {
-    GST_WARNING_OBJECT (src, "failed to close the camera");
-  }
+  g_return_if_fail (src != NULL);
+  g_return_if_fail (GST_IS_ARDUCAMSRC (src));
+  GST_LOG_OBJECT (src, "gst_ardu_cam_src_finalize entry");
+  GST_LOG_OBJECT (src, "gst_ardu_cam_src_finalize exit");
   G_OBJECT_CLASS (gst_ardu_cam_src_parent_class)->finalize (object);
 }
 
 static void gst_ardu_cam_src_set_orientation (
   GstArduCamSrc * src, GstVideoOrientationMethod orientation)
 {
+  g_return_if_fail (src != NULL);
+
+  GST_LOG_OBJECT (src, "gst_ardu_cam_src_set_orientation entry");
   switch (orientation) {
     case GST_VIDEO_ORIENTATION_IDENTITY:
       src->config.rotation = 0;
@@ -401,6 +443,7 @@ static void gst_ardu_cam_src_set_orientation (
     orientation <= GST_VIDEO_ORIENTATION_CUSTOM ?
     orientation : GST_VIDEO_ORIENTATION_CUSTOM;
   src->config.change_flags |= PROP_CHANGE_ORIENTATION;
+  GST_LOG_OBJECT (src, "gst_ardu_cam_src_set_orientation exit");
 }
 
 static void
@@ -411,17 +454,16 @@ gst_ardu_cam_src_direction_init (GstVideoDirectionInterface * iface)
 
 static gboolean
 gst_ardu_cam_src_orientation_get_hflip (
-  GstVideoOrientation * orientation,gboolean * flip)
+  GstVideoOrientation * orientation, gboolean * flip)
 {
   GstArduCamSrc *src = GST_ARDUCAMSRC (orientation);
-
   g_return_val_if_fail (src != NULL, FALSE);
   g_return_val_if_fail (GST_IS_ARDUCAMSRC (src), FALSE);
-
+  GST_LOG_OBJECT (src, "gst_ardu_cam_src_orientation_get_hflip entry");
   g_mutex_lock (&src->config.lock);
   *flip = src->config.hflip;
   g_mutex_unlock (&src->config.lock);
-
+  GST_LOG_OBJECT (src, "gst_ardu_cam_src_orientation_get_hflip exit");
   return TRUE;
 }
 
@@ -430,14 +472,13 @@ gst_ardu_cam_src_orientation_get_vflip (
   GstVideoOrientation * orientation, gboolean * flip)
 {
   GstArduCamSrc *src = GST_ARDUCAMSRC (orientation);
-
   g_return_val_if_fail (src != NULL, FALSE);
   g_return_val_if_fail (GST_IS_ARDUCAMSRC (src), FALSE);
-
+  GST_LOG_OBJECT (src, "gst_ardu_cam_src_orientation_get_vflip entry");
   g_mutex_lock (&src->config.lock);
   *flip = src->config.vflip;
   g_mutex_unlock (&src->config.lock);
-
+  GST_LOG_OBJECT (src, "gst_ardu_cam_src_orientation_get_vflip exit");
   return TRUE;
 }
 
@@ -448,11 +489,12 @@ gst_ardu_cam_src_orientation_set_hflip (GstVideoOrientation * orientation, gbool
 
   g_return_val_if_fail (src != NULL, FALSE);
   g_return_val_if_fail (GST_IS_ARDUCAMSRC (src), FALSE);
-
+  GST_LOG_OBJECT (src, "gst_ardu_cam_src_orientation_set_hflip entry");
   g_mutex_lock (&src->config.lock);
   src->config.hflip = flip;
   src->config.change_flags |= PROP_CHANGE_ORIENTATION;
   g_mutex_unlock (&src->config.lock);
+  GST_LOG_OBJECT (src, "gst_ardu_cam_src_orientation_set_hflip entry");
   return TRUE;
 }
 
@@ -463,11 +505,12 @@ gst_ardu_cam_src_orientation_set_vflip (GstVideoOrientation * orientation, gbool
 
   g_return_val_if_fail (src != NULL, FALSE);
   g_return_val_if_fail (GST_IS_ARDUCAMSRC (src), FALSE);
-
+  GST_LOG_OBJECT (src, "gst_ardu_cam_src_orientation_set_vflip entry");
   g_mutex_lock (&src->config.lock);
   src->config.vflip = flip;
   src->config.change_flags |= PROP_CHANGE_ORIENTATION;
   g_mutex_unlock (&src->config.lock);
+  GST_LOG_OBJECT (src, "gst_ardu_cam_src_orientation_set_vflip entry");
   return TRUE;
 }
 
@@ -486,6 +529,11 @@ gst_ardu_cam_src_set_property (GObject * object, guint prop_id,
     const GValue * value, GParamSpec * pspec)
 {
   GstArduCamSrc *src = GST_ARDUCAMSRC (object);
+  
+  g_return_if_fail (src != NULL);
+  g_return_if_fail (GST_IS_ARDUCAMSRC (src));
+  
+  GST_LOG_OBJECT (src, "gst_ardu_cam_src_set_property entry");
 
   g_mutex_lock(&src->config.lock);
 
@@ -518,11 +566,15 @@ gst_ardu_cam_src_set_property (GObject * object, guint prop_id,
     case PROP_VIDEO_DIRECTION:
       gst_ardu_cam_src_set_orientation (src, g_value_get_enum (value));
       break;
+    case PROP_TIMEOUT:
+      src->config.timeout = g_value_get_int (value);
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
   }
   g_mutex_unlock (&src->config.lock);
+
+  GST_LOG_OBJECT (src, "gst_ardu_cam_src_set_property exit");
 }
 
 static void
@@ -530,6 +582,12 @@ gst_ardu_cam_src_get_property (GObject * object, guint prop_id,
     GValue * value, GParamSpec * pspec)
 {
   GstArduCamSrc *src = GST_ARDUCAMSRC (object);
+
+  g_return_if_fail (src != NULL);
+  g_return_if_fail (GST_IS_ARDUCAMSRC (src));
+
+  GST_LOG_OBJECT (src, "gst_ardu_cam_src_get_property entry");
+
   g_mutex_lock (&src->config.lock);
   switch (prop_id) {
     case PROP_SENSOR_NAME:
@@ -568,129 +626,118 @@ gst_ardu_cam_src_get_property (GObject * object, guint prop_id,
     case PROP_VIDEO_DIRECTION:
       g_value_set_enum (value, src->config.orientation);
       break;
+    case PROP_TIMEOUT:
+      g_value_set_int (value, src->config.timeout);
+      break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
   }
   g_mutex_unlock (&src->config.lock);
-}
-
-static int 
-raw_callback (BUFFER *buffer) 
-{
-  GstBuffer *buf;
-  GstArduCamSrc *src = buffer->userdata;
   
-  g_mutex_lock (&src->buffer.lock.gst);
-    if(!src->buffer.pointer) 
-    {
-      g_cond_wait (&src->buffer.lock.gst_cond, &src->buffer.lock.gst);
-    }
-  g_mutex_unlock (&src->buffer.lock.gst);
-
-  g_mutex_lock (&src->buffer.lock.gst);
-    g_mutex_lock (&src->buffer.lock.ardu);
-      // NOTE(marcin.sielski): required while stopping
-      if (src->started && src->buffer.pointer)
-      { 
-        buf = gst_buffer_new_allocate (NULL, buffer->length, NULL);
-        gst_buffer_fill (buf, 0, buffer->data, buffer->length);
-        *(src->buffer.pointer) = buf;
-      }
-      g_cond_signal (&src->buffer.lock.ardu_cond);
-    g_mutex_unlock (&src->buffer.lock.ardu);
-    g_cond_wait (&src->buffer.lock.gst_cond, &src->buffer.lock.gst);
-  g_mutex_unlock (&src->buffer.lock.gst);
-  return 0;
+  GST_LOG_OBJECT (src, "gst_ardu_cam_src_get_property exit");
 }
+
 
 static GstFlowReturn
 gst_ardu_cam_src_create (GstPushSrc * parent, GstBuffer ** buf)
 {
   GstArduCamSrc *src = GST_ARDUCAMSRC (parent);
-  if (!src->started) {
-    src->started = TRUE;
-    if (arducam_set_raw_callback (src->camera_instance, raw_callback, src)) {
-      GST_ERROR_OBJECT(src, "Failed to start streaming");
-      src->started = FALSE;
-      return GST_FLOW_ERROR;
-    }
-  }
-  if (src->started) {
-    g_mutex_lock (&src->config.lock);
-    if (src->config.change_flags)
+
+  g_return_val_if_fail (src != NULL, GST_FLOW_ERROR);
+  g_return_val_if_fail (GST_IS_ARDUCAMSRC (src), GST_FLOW_ERROR);
+
+  GST_TRACE_OBJECT (src, "gst_ardu_cam_src_create entry");
+
+  g_mutex_lock (&src->config.lock);
+  if (src->config.change_flags)
+  {
+    // NOTE(marcin.sielski): Must be called upfront
+    if (src->config.change_flags & PROP_CHANGE_EXTERNAL_TRIGGER)
     {
-      // NOTE(marcin.sielski): Must be called upfront
-      if (src->config.change_flags & PROP_CHANGE_EXTERNAL_TRIGGER)
+      if (arducam_set_control (camera_instance, V4L2_CID_ARDUCAM_EXT_TRI, 
+        src->config.external_trigger)) 
       {
-        if (arducam_set_control (src->camera_instance, V4L2_CID_ARDUCAM_EXT_TRI, 
-          src->config.external_trigger)) 
-        {
-          GST_WARNING_OBJECT (src, "Could not set external trigger mode");
-        }
+        GST_WARNING_OBJECT (src, "Could not set external trigger mode");
       }
-      if (src->config.change_flags & PROP_CHANGE_HFLIP)
-      {
-        if (arducam_set_control (src->camera_instance, V4L2_CID_HFLIP,
-          src->config.hflip)) 
-        {
-          GST_WARNING_OBJECT (src, "Could not set hflip");
-        }
-      }
-      if (src->config.change_flags & PROP_CHANGE_VFLIP)
-      {
-        if (arducam_set_control (src->camera_instance, V4L2_CID_VFLIP, 
-          src->config.vflip)) 
-        {
-          GST_WARNING_OBJECT (src, "Could not set vflip");
-        }
-      }
-      if (src->config.change_flags & PROP_CHANGE_EXPOSURE)
-      {
-        if (arducam_set_control (src->camera_instance, V4L2_CID_EXPOSURE, 
-          src->config.exposure)) 
-        {
-          GST_WARNING_OBJECT (src, "Could not set exposure");
-        }
-      }
-      if (src->config.change_flags & PROP_CHANGE_GAIN)
-      {
-        if (arducam_set_control (src->camera_instance, V4L2_CID_GAIN, 
-          src->config.gain)) 
-        {
-          GST_WARNING_OBJECT (src, "Could not set gain");
-        }
-      }
-      if (src->config.change_flags & PROP_CHANGE_AUTO_EXPOSURE)
-      {
-        if (arducam_software_auto_exposure (src->camera_instance, 
-          src->config.auto_exposure)) 
-        {
-          GST_WARNING_OBJECT (src, "Could not set auto exposure mode");
-        }
-      }
-      src->config.change_flags = 0;
     }
-    g_mutex_unlock(&src->config.lock); 
-
-    g_mutex_lock (&src->buffer.lock.gst);
-      src->buffer.pointer = buf;
-      g_cond_signal (&src->buffer.lock.gst_cond);
-    g_mutex_unlock (&src->buffer.lock.gst);
-
-    g_mutex_lock (&src->buffer.lock.ardu);
-      g_cond_wait (&src->buffer.lock.ardu_cond, &src->buffer.lock.ardu);
-      g_mutex_lock (&src->buffer.lock.gst);
-        src->buffer.pointer = NULL;
-      g_mutex_unlock (&src->buffer.lock.gst);
-    g_mutex_unlock (&src->buffer.lock.ardu);
+    if (src->config.change_flags & PROP_CHANGE_HFLIP)
+    {
+      if (arducam_set_control (camera_instance, V4L2_CID_HFLIP,
+        src->config.hflip)) 
+      {
+        GST_WARNING_OBJECT (src, "Could not set hflip");
+      }
+    }
+    if (src->config.change_flags & PROP_CHANGE_VFLIP)
+    {
+      if (arducam_set_control (camera_instance, V4L2_CID_VFLIP, 
+        src->config.vflip)) 
+      {
+        GST_WARNING_OBJECT (src, "Could not set vflip");
+      }
+    }
+    if (src->config.change_flags & PROP_CHANGE_EXPOSURE)
+    {
+      if (arducam_set_control (camera_instance, V4L2_CID_EXPOSURE, 
+        src->config.exposure)) 
+      {
+        GST_WARNING_OBJECT (src, "Could not set exposure");
+      }
+    }
+    if (src->config.change_flags & PROP_CHANGE_GAIN)
+    {
+      if (arducam_set_control (camera_instance, V4L2_CID_GAIN, 
+        src->config.gain)) 
+      {
+        GST_WARNING_OBJECT (src, "Could not set gain");
+      }
+    }
+    if (src->config.change_flags & PROP_CHANGE_AUTO_EXPOSURE)
+    {
+      if (arducam_software_auto_exposure (camera_instance, 
+        src->config.auto_exposure)) 
+      {
+        GST_WARNING_OBJECT (src, "Could not set auto exposure mode");
+      }
+    }
+    src->config.change_flags = 0;
   }
+
+  BUFFER *buffer = arducam_capture(
+    camera_instance, &image_format, src->config.timeout);
+
+  g_mutex_unlock(&src->config.lock); 
+
+  if (!buffer) {
+    GST_ERROR_OBJECT (src, "Failed to capture frame");
+    return GST_FLOW_ERROR;
+   
+  }
+  GstBuffer *gstbuf = gst_buffer_new_allocate (NULL, buffer->length, NULL);
+  gst_buffer_fill (gstbuf, 0, buffer->data, buffer->length);
+  arducam_release_buffer(buffer);
+  *buf = gstbuf;
+
+  
+
   return GST_FLOW_OK;
 }
 
 static gboolean
 gst_ardu_cam_src_start (GstBaseSrc * parent)
 {
+  GstArduCamSrc *src = GST_ARDUCAMSRC (parent);
+
+  g_return_val_if_fail (src != NULL, FALSE);
+  g_return_val_if_fail (GST_IS_ARDUCAMSRC (src), FALSE);  
+
+  GST_LOG_OBJECT (src, "gst_ardu_cam_src_start entry");
+
+  g_mutex_init (&src->config.lock);
+
+  GST_LOG_OBJECT (src, "gst_ardu_cam_src_start exit");
+
   return TRUE;
 }
 
@@ -698,31 +745,47 @@ static gboolean
 gst_ardu_cam_src_stop (GstBaseSrc * parent)
 {
   GstArduCamSrc *src = GST_ARDUCAMSRC (parent);
-  src->started = FALSE;
-  src->buffer.pointer = NULL;  
-  g_cond_signal (&src->buffer.lock.gst_cond);
-  g_cond_signal (&src->buffer.lock.ardu_cond);
-  if (arducam_set_raw_callback (src->camera_instance, NULL, NULL)) {
-    GST_ERROR_OBJECT (src, "Could not stop streaming");
-  }
+
+  g_return_val_if_fail (src != NULL, FALSE);
+  g_return_val_if_fail (GST_IS_ARDUCAMSRC (src), FALSE);   
+
+  GST_LOG_OBJECT (src, "gst_ardu_cam_src_stop entry");
+
+  g_mutex_clear (&src->config.lock);
+
+  GST_LOG_OBJECT (src, "gst_ardu_cam_src_stop exit");
+ 
   return TRUE;
 }
 
 static gboolean
 gst_ardu_cam_src_decide_allocation (GstBaseSrc * bsrc, GstQuery * query)
 {
+  g_return_val_if_fail (bsrc != NULL, FALSE);
+ 
   GST_LOG_OBJECT (bsrc, "In decide_allocation");
+ 
   return GST_BASE_SRC_CLASS (parent_class)->decide_allocation (bsrc, query);
 }
+
 
 static GstCaps *
 gst_ardu_cam_src_get_caps (GstBaseSrc * bsrc, GstCaps * filter)
 {
   GstCaps *caps;
+ 
+  g_return_val_if_fail (bsrc != NULL, FALSE); 
+ 
+  GST_LOG_OBJECT (bsrc, "gst_ardu_cam_src_get_caps entry");
+ 
   caps = gst_pad_get_pad_template_caps (GST_BASE_SRC_PAD (bsrc));
   caps = gst_caps_make_writable (caps);
+ 
+  GST_LOG_OBJECT (bsrc, "gst_ardu_cam_src_get_caps exit");
+ 
   return caps;
 }
+
 
 static gboolean
 gst_ardu_cam_src_set_caps (GstBaseSrc * bsrc, GstCaps * caps)
@@ -732,35 +795,49 @@ gst_ardu_cam_src_set_caps (GstBaseSrc * bsrc, GstCaps * caps)
   GstStructure *structure;
   const gchar *format = NULL;
 
+  g_return_val_if_fail (src != NULL, FALSE);
+  g_return_val_if_fail (GST_IS_ARDUCAMSRC (src), FALSE); 
+
+  GST_LOG_OBJECT (src, "gst_ardu_cam_src_set_caps entry");
+
   if (!gst_video_info_from_caps (&info, caps)) return FALSE;
+
   structure = gst_caps_get_structure (caps, 0);
+  gint sensor_mode_resolution = -1;
   if (gst_structure_get_int (structure, "height", &src->height)) 
   {
     switch(src->height) 
     {
       case 100:
         src->width = 160;
+        sensor_mode_resolution = 4;
         break;
       case 200:
         src->width = 320;
+        sensor_mode_resolution = 3;
         break;
       case 400:
         src->width = 640;
+        sensor_mode_resolution = 2;
         break;
       case 720:
+        sensor_mode_resolution = 1;
       case 800:
         src->width = 1280;
+        sensor_mode_resolution = 0;
         break;
       default:
+        GST_ERROR_OBJECT (src, "Height not supported");
         return FALSE;
     }
     gint width;
     if (gst_structure_get_int (structure, "width", &width) && 
       width != src->width) {
+      GST_ERROR_OBJECT (src, "Width not supported");
       return FALSE;
     }
   }
-  gint sensor_mode;
+  gint sensor_mode = -1;
   if (gst_structure_get_int (structure, "sensor-mode", &sensor_mode)) {
     switch(sensor_mode) {
       case -1:
@@ -799,24 +876,37 @@ gst_ardu_cam_src_set_caps (GstBaseSrc * bsrc, GstCaps * caps)
         if (src->height != 100) return FALSE;
         break;
       default:
+        GST_ERROR_OBJECT (src, "Sensor mode not supported");
         return FALSE;
     }
   }
   format = gst_structure_get_string (structure, "format");
   if (format && !g_str_equal (format, "GRAY8")) return FALSE;
-  if (sensor_mode != -1)
+  if (sensor_mode != -1) sensor_mode_resolution = sensor_mode;
+  if (sensor_mode_resolution != -1)
   {
-    src->sensor_mode = sensor_mode;
-    if (arducam_set_mode (src->camera_instance, src->sensor_mode))
+    src->sensor_mode = sensor_mode_resolution;
+    if (arducam_set_mode (camera_instance, src->sensor_mode))
     {
-      GST_WARNING_OBJECT (src, "Could not set sensor mode");
+      GST_ERROR_OBJECT (src, "Could not set sensor mode");
+      return FALSE;
+    }
+    // NOTE(marcin.sielski): For some reason first capture timeouts.
+    BUFFER *buffer = arducam_capture(camera_instance, &image_format, 100);
+    if (buffer) arducam_release_buffer(buffer);
+    if (arducam_set_mode (camera_instance, src->sensor_mode))
+    {
+      GST_ERROR_OBJECT (src, "Could not set sensor mode");
+      return FALSE;
     }
   }
-  if (arducam_set_resolution (src->camera_instance, &src->width, &src->height))
-  {
-    GST_ERROR_OBJECT (src, "Could not set resolution");
-    return FALSE;
+  gint timeout = -1;
+  if (gst_structure_get_int (
+    structure, "sensor-mode", &timeout) && timeout != -1) {
+    src->config.timeout = timeout;
   }
+  GST_LOG_OBJECT (bsrc, "gst_ardu_cam_src_set_caps exit");
+
   return TRUE;
 }
 
