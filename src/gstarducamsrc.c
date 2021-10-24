@@ -62,7 +62,7 @@ enum
 #define EXTERNAL_TRIGGER_DEFAULT FALSE
 #define EXPOSURE_MODE_DEFAULT TRUE
 #define ROTATION_DEFAULT 0
-#define TIMEOUT_DEFAULT 1000
+#define TIMEOUT_DEFAULT 3000
 
 /* the capabilities of the inputs and outputs.
  *
