@@ -49,9 +49,7 @@ enum
   PROP_EXPOSURE,
   PROP_GAIN,
   PROP_EXTERNAL_TRIGGER,
-  PROP_AUTO_EXPOSURE,
-  PROP_ROTATION,
-  PROP_VIDEO_DIRECTION,
+  PROP_EXPOSURE_MODE,
   PROP_TIMEOUT
 };
 
@@ -62,7 +60,7 @@ enum
 #define EXPOSURE_DEFAULT 681
 #define GAIN_DEFAULT 1
 #define EXTERNAL_TRIGGER_DEFAULT FALSE
-#define AUTO_EXPOSURE_DEFAULT TRUE
+#define EXPOSURE_MODE_DEFAULT TRUE
 #define ROTATION_DEFAULT 0
 #define TIMEOUT_DEFAULT 1000
 
@@ -100,19 +98,10 @@ static gboolean gst_ardu_cam_src_start (GstBaseSrc * parent);
 static gboolean gst_ardu_cam_src_stop (GstBaseSrc * parent);
 static gboolean gst_ardu_cam_src_decide_allocation (GstBaseSrc * src,
     GstQuery * query);
-static void gst_ardu_cam_src_orientation_init (
-    GstVideoOrientationInterface * iface);
-static void gst_ardu_cam_src_direction_init (
-  GstVideoDirectionInterface * iface);
 
 #define gst_ardu_cam_src_parent_class parent_class
-G_DEFINE_TYPE_WITH_CODE (GstArduCamSrc, gst_ardu_cam_src, 
-    GST_TYPE_PUSH_SRC,
-    G_IMPLEMENT_INTERFACE (GST_TYPE_VIDEO_DIRECTION, 
-        gst_ardu_cam_src_direction_init);
-    G_IMPLEMENT_INTERFACE (GST_TYPE_VIDEO_ORIENTATION, 
-        gst_ardu_cam_src_orientation_init)
-    );
+G_DEFINE_TYPE (GstArduCamSrc, gst_ardu_cam_src, 
+    GST_TYPE_PUSH_SRC);
 
 #define C_ENUM(v) ((gint) v)
 
@@ -203,7 +192,7 @@ gst_ardu_cam_src_sensor_mode_get_type (void)
   return id;
 }
 
-IMAGE_FORMAT image_format = {IMAGE_ENCODING_RAW_BAYER, 100};
+static IMAGE_FORMAT image_format = {IMAGE_ENCODING_RAW_BAYER, 100};
 static CAMERA_INSTANCE camera_instance = NULL;
 
 static void 
@@ -212,6 +201,9 @@ gst_ardu_cam_src_atexit (void)
   GST_LOG ("gst_ardu_cam_src_atexit entry");
   if (camera_instance)
   {
+    // NOTE(marcin.sielski):arducam_close_camera segfaults if exposure mode is 
+    // enabled and then disabled
+    arducam_software_auto_exposure(camera_instance, TRUE);
     if (arducam_close_camera (camera_instance))
     {
       GST_WARNING ("Failed to close camera");
@@ -279,8 +271,8 @@ gst_ardu_cam_src_class_init (GstArduCamSrcClass * klass)
           VFLIP_DEFAULT, 
           G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE | G_PARAM_STATIC_STRINGS));
   g_object_class_install_property (gobject_class, PROP_EXPOSURE,
-      g_param_spec_int ("exposure", "Exposure", "Set or get imager exposure",
-          1, 65535, EXPOSURE_DEFAULT, 
+      g_param_spec_int ("exposure", "Exposure",
+          "Set or get imager exposure time [us]", 1, 65535, EXPOSURE_DEFAULT, 
           G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE | G_PARAM_STATIC_STRINGS));
   g_object_class_install_property (gobject_class, PROP_GAIN,
       g_param_spec_int ("gain", "Gain", "Set or get imager gain",
@@ -291,17 +283,11 @@ gst_ardu_cam_src_class_init (GstArduCamSrcClass * klass)
           "Enable or disable external trigger mode", 
           EXTERNAL_TRIGGER_DEFAULT, 
           G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE | G_PARAM_STATIC_STRINGS));
-  g_object_class_install_property (gobject_class, PROP_AUTO_EXPOSURE,
-      g_param_spec_boolean ("auto-exposure", "Auto Exposure Mode", 
+  g_object_class_install_property (gobject_class, PROP_EXPOSURE_MODE,
+      g_param_spec_boolean ("exposure-mode", "Auto Exposure Mode", 
           "Enable or disable software auto exposure mode", 
-          AUTO_EXPOSURE_DEFAULT, 
+          EXPOSURE_MODE_DEFAULT, 
           G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE | G_PARAM_STATIC_STRINGS));
-  g_object_class_install_property (gobject_class, PROP_ROTATION,
-      g_param_spec_int ("rotation", "Rotation",
-          "Rotate captured image (0, 90, 180, 270 degrees)", 0, 270, 0,
-          G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE | G_PARAM_STATIC_STRINGS));
-    g_object_class_override_property (gobject_class, PROP_VIDEO_DIRECTION,
-      "video-direction");
   g_object_class_install_property (gobject_class, PROP_TIMEOUT,
       g_param_spec_int ("timeout", "Timeout", "Set or get frame capture timeout",
           0, G_MAXINT, TIMEOUT_DEFAULT, 
@@ -355,11 +341,10 @@ gst_ardu_cam_src_init (GstArduCamSrc * src)
   src->config.exposure = EXPOSURE_DEFAULT;
   src->config.gain = GAIN_DEFAULT;
   src->config.external_trigger = EXTERNAL_TRIGGER_DEFAULT;
-  src->config.auto_exposure = AUTO_EXPOSURE_DEFAULT;
-  src->config.rotation = ROTATION_DEFAULT;
+  src->config.exposure_mode = EXPOSURE_MODE_DEFAULT;
   src->config.timeout = TIMEOUT_DEFAULT;
 
-  src->config.change_flags |= PROP_CHANGE_AUTO_EXPOSURE;
+  src->config.change_flags |= PROP_CHANGE_EXPOSURE_MODE;
 
   GST_LOG_OBJECT (src, "gst_ardu_cam_src_init exit");
 }
@@ -375,153 +360,6 @@ gst_ardu_cam_src_finalize (GObject *object)
   GST_LOG_OBJECT (src, "gst_ardu_cam_src_finalize entry");
   GST_LOG_OBJECT (src, "gst_ardu_cam_src_finalize exit");
   G_OBJECT_CLASS (gst_ardu_cam_src_parent_class)->finalize (object);
-}
-
-static void gst_ardu_cam_src_set_orientation (
-  GstArduCamSrc * src, GstVideoOrientationMethod orientation)
-{
-  g_return_if_fail (src != NULL);
-
-  GST_LOG_OBJECT (src, "gst_ardu_cam_src_set_orientation entry");
-  switch (orientation) {
-    case GST_VIDEO_ORIENTATION_IDENTITY:
-      src->config.rotation = 0;
-      src->config.hflip = FALSE;
-      src->config.vflip = FALSE;
-      GST_DEBUG_OBJECT (src, "set orientation identity");
-      break;
-    case GST_VIDEO_ORIENTATION_90R:
-      src->config.rotation = 90;
-      src->config.hflip = FALSE;
-      src->config.vflip = FALSE;
-      GST_DEBUG_OBJECT (src, "set orientation 90R");
-      break;
-    case GST_VIDEO_ORIENTATION_180:
-      src->config.rotation = 180;
-      src->config.hflip = FALSE;
-      src->config.vflip = FALSE;
-      GST_DEBUG_OBJECT (src, "set orientation 180");
-      break;
-    case GST_VIDEO_ORIENTATION_90L:
-      src->config.rotation = 270;
-      src->config.hflip = FALSE;
-      src->config.vflip = FALSE;
-      GST_DEBUG_OBJECT (src, "set orientation 90L");
-      break;
-    case GST_VIDEO_ORIENTATION_HORIZ:
-      src->config.rotation = 0;
-      src->config.hflip = TRUE;
-      src->config.vflip = FALSE;
-      GST_DEBUG_OBJECT (src, "set orientation hflip");
-      break;
-    case GST_VIDEO_ORIENTATION_VERT:
-      src->config.rotation = 0;
-      src->config.hflip = FALSE;
-      src->config.vflip = TRUE;
-      GST_DEBUG_OBJECT (src, "set orientation vflip");
-      break;
-    case GST_VIDEO_ORIENTATION_UL_LR:
-      src->config.rotation = 90;
-      src->config.hflip = FALSE;
-      src->config.vflip = TRUE;
-      GST_DEBUG_OBJECT (src, "set orientation trans");
-      break;
-    case GST_VIDEO_ORIENTATION_UR_LL:
-      src->config.rotation = 270;
-      src->config.hflip = FALSE;
-      src->config.vflip = TRUE;
-      GST_DEBUG_OBJECT (src, "set orientation trans");
-      break;
-    case GST_VIDEO_ORIENTATION_CUSTOM:
-      break;
-    default:
-      GST_WARNING_OBJECT (src, "unsupported orientation %d", orientation);
-      break;
-  }
-  src->config.orientation =
-    orientation >= GST_VIDEO_ORIENTATION_IDENTITY &&
-    orientation <= GST_VIDEO_ORIENTATION_CUSTOM ?
-    orientation : GST_VIDEO_ORIENTATION_CUSTOM;
-  src->config.change_flags |= PROP_CHANGE_ORIENTATION;
-  GST_LOG_OBJECT (src, "gst_ardu_cam_src_set_orientation exit");
-}
-
-static void
-gst_ardu_cam_src_direction_init (GstVideoDirectionInterface * iface)
-{
-  /* We implement the video-direction property */
-}
-
-static gboolean
-gst_ardu_cam_src_orientation_get_hflip (
-  GstVideoOrientation * orientation, gboolean * flip)
-{
-  GstArduCamSrc *src = GST_ARDUCAMSRC (orientation);
-  g_return_val_if_fail (src != NULL, FALSE);
-  g_return_val_if_fail (GST_IS_ARDUCAMSRC (src), FALSE);
-  GST_LOG_OBJECT (src, "gst_ardu_cam_src_orientation_get_hflip entry");
-  g_mutex_lock (&src->config.lock);
-  *flip = src->config.hflip;
-  g_mutex_unlock (&src->config.lock);
-  GST_LOG_OBJECT (src, "gst_ardu_cam_src_orientation_get_hflip exit");
-  return TRUE;
-}
-
-static gboolean
-gst_ardu_cam_src_orientation_get_vflip (
-  GstVideoOrientation * orientation, gboolean * flip)
-{
-  GstArduCamSrc *src = GST_ARDUCAMSRC (orientation);
-  g_return_val_if_fail (src != NULL, FALSE);
-  g_return_val_if_fail (GST_IS_ARDUCAMSRC (src), FALSE);
-  GST_LOG_OBJECT (src, "gst_ardu_cam_src_orientation_get_vflip entry");
-  g_mutex_lock (&src->config.lock);
-  *flip = src->config.vflip;
-  g_mutex_unlock (&src->config.lock);
-  GST_LOG_OBJECT (src, "gst_ardu_cam_src_orientation_get_vflip exit");
-  return TRUE;
-}
-
-static gboolean
-gst_ardu_cam_src_orientation_set_hflip (GstVideoOrientation * orientation, gboolean flip)
-{
-  GstArduCamSrc *src = GST_ARDUCAMSRC (orientation);
-
-  g_return_val_if_fail (src != NULL, FALSE);
-  g_return_val_if_fail (GST_IS_ARDUCAMSRC (src), FALSE);
-  GST_LOG_OBJECT (src, "gst_ardu_cam_src_orientation_set_hflip entry");
-  g_mutex_lock (&src->config.lock);
-  src->config.hflip = flip;
-  src->config.change_flags |= PROP_CHANGE_ORIENTATION;
-  g_mutex_unlock (&src->config.lock);
-  GST_LOG_OBJECT (src, "gst_ardu_cam_src_orientation_set_hflip entry");
-  return TRUE;
-}
-
-static gboolean
-gst_ardu_cam_src_orientation_set_vflip (GstVideoOrientation * orientation, gboolean flip)
-{
-  GstArduCamSrc *src = GST_ARDUCAMSRC (orientation);
-
-  g_return_val_if_fail (src != NULL, FALSE);
-  g_return_val_if_fail (GST_IS_ARDUCAMSRC (src), FALSE);
-  GST_LOG_OBJECT (src, "gst_ardu_cam_src_orientation_set_vflip entry");
-  g_mutex_lock (&src->config.lock);
-  src->config.vflip = flip;
-  src->config.change_flags |= PROP_CHANGE_ORIENTATION;
-  g_mutex_unlock (&src->config.lock);
-  GST_LOG_OBJECT (src, "gst_ardu_cam_src_orientation_set_vflip entry");
-  return TRUE;
-}
-
-
-static void
-gst_ardu_cam_src_orientation_init (GstVideoOrientationInterface * iface)
-{
-  iface->get_hflip = gst_ardu_cam_src_orientation_get_hflip;
-  iface->set_hflip = gst_ardu_cam_src_orientation_set_hflip;
-  iface->get_vflip = gst_ardu_cam_src_orientation_get_vflip;
-  iface->set_vflip = gst_ardu_cam_src_orientation_set_vflip;
 }
 
 static void
@@ -559,12 +397,9 @@ gst_ardu_cam_src_set_property (GObject * object, guint prop_id,
       src->config.external_trigger = g_value_get_boolean (value);
       src->config.change_flags |= PROP_CHANGE_EXTERNAL_TRIGGER;
       break;
-    case PROP_AUTO_EXPOSURE:
-      src->config.auto_exposure = g_value_get_boolean (value);
-      src->config.change_flags |= PROP_CHANGE_AUTO_EXPOSURE;
-      break;
-    case PROP_VIDEO_DIRECTION:
-      gst_ardu_cam_src_set_orientation (src, g_value_get_enum (value));
+    case PROP_EXPOSURE_MODE:
+      src->config.exposure_mode = g_value_get_boolean (value);
+      src->config.change_flags |= PROP_CHANGE_EXPOSURE_MODE;
       break;
     case PROP_TIMEOUT:
       src->config.timeout = g_value_get_int (value);
@@ -617,14 +452,8 @@ gst_ardu_cam_src_get_property (GObject * object, guint prop_id,
     case PROP_EXTERNAL_TRIGGER:
       g_value_set_boolean (value, src->config.external_trigger);
       break;
-    case PROP_AUTO_EXPOSURE:
-      g_value_set_boolean (value, src->config.auto_exposure);
-      break;
-    case PROP_ROTATION:
-      g_value_set_int (value, src->config.rotation);
-      break;
-    case PROP_VIDEO_DIRECTION:
-      g_value_set_enum (value, src->config.orientation);
+    case PROP_EXPOSURE_MODE:
+      g_value_set_boolean (value, src->config.exposure_mode);
       break;
     case PROP_TIMEOUT:
       g_value_set_int (value, src->config.timeout);
@@ -693,10 +522,10 @@ gst_ardu_cam_src_create (GstPushSrc * parent, GstBuffer ** buf)
         GST_WARNING_OBJECT (src, "Could not set gain");
       }
     }
-    if (src->config.change_flags & PROP_CHANGE_AUTO_EXPOSURE)
+    if (src->config.change_flags & PROP_CHANGE_EXPOSURE_MODE)
     {
       if (arducam_software_auto_exposure (camera_instance, 
-        src->config.auto_exposure)) 
+        src->config.exposure_mode)) 
       {
         GST_WARNING_OBJECT (src, "Could not set auto exposure mode");
       }

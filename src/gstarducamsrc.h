@@ -52,8 +52,7 @@ typedef enum
   PROP_CHANGE_EXPOSURE         = (1 << 2),
   PROP_CHANGE_GAIN             = (1 << 3),
   PROP_CHANGE_EXTERNAL_TRIGGER = (1 << 4),
-  PROP_CHANGE_AUTO_EXPOSURE    = (1 << 5),
-  PROP_CHANGE_ORIENTATION      = (1 << 6)
+  PROP_CHANGE_EXPOSURE_MODE    = (1 << 5),
 } ArduCamPropChangeFlags;
 
 typedef struct
@@ -65,9 +64,7 @@ typedef struct
   gint exposure;
   gint gain;
   gboolean external_trigger;
-  gboolean auto_exposure;
-  GstVideoOrientationMethod orientation;
-  gint rotation;
+  gboolean exposure_mode;
   gint timeout;
 }
 ArduCamConfig;
