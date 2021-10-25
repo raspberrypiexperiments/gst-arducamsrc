@@ -272,7 +272,8 @@ gst_ardu_cam_src_class_init (GstArduCamSrcClass * klass)
           G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE | G_PARAM_STATIC_STRINGS));
   g_object_class_install_property (gobject_class, PROP_SHUTTER_SPEED,
       g_param_spec_int ("shutter-speed", "Shutter Speed",
-          "Set or get shutter speed time, in microseconds. (0 = Auto)", 0, 65535, SHUTTER_SPEED_DEFAULT, 
+          "Set or get shutter speed time, in microseconds. (0 = Auto)", 
+          0, 65535, SHUTTER_SPEED_DEFAULT, 
           G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE | G_PARAM_STATIC_STRINGS));
   g_object_class_install_property (gobject_class, PROP_GAIN,
       g_param_spec_int ("gain", "Gain", "Set or get imager gain",
@@ -387,16 +388,16 @@ gst_ardu_cam_src_set_property (GObject * object, guint prop_id,
       break;
     case PROP_SHUTTER_SPEED:
       src->config.shutter_speed = g_value_get_int (value);
-      if (src->config.shutter_speed == 0)
+      if (src->config.shutter_speed)
       {
-        src->config.exposure_mode = TRUE;
-        src->config.change_flags |= PROP_CHANGE_EXPOSURE_MODE;
-      }
-      else
-      { 
         src->config.exposure_mode = FALSE;
         src->config.change_flags |= PROP_CHANGE_EXPOSURE_MODE;
         src->config.change_flags |= PROP_CHANGE_SHUTTER_SPEED;
+      }
+      else
+      { 
+        src->config.exposure_mode = TRUE;
+        src->config.change_flags |= PROP_CHANGE_EXPOSURE_MODE;
       }
       break;
     case PROP_GAIN:
@@ -410,6 +411,16 @@ gst_ardu_cam_src_set_property (GObject * object, guint prop_id,
     case PROP_EXPOSURE_MODE:
       src->config.exposure_mode = g_value_get_boolean (value);
       src->config.change_flags |= PROP_CHANGE_EXPOSURE_MODE;
+      if (!src->config.exposure_mode)
+      {
+        gint shutter_speed;
+        if (arducam_get_control(
+          camera_instance, V4L2_CID_EXPOSURE, &shutter_speed))
+        {
+          GST_WARNING_OBJECT(src, "Failed to get current shutter speed.");
+        }
+        else src->config.shutter_speed = shutter_speed;
+      }
       break;
     case PROP_TIMEOUT:
       src->config.timeout = g_value_get_int (value);
@@ -454,7 +465,18 @@ gst_ardu_cam_src_get_property (GObject * object, guint prop_id,
       g_value_set_boolean (value, src->config.vflip);
       break;
     case PROP_SHUTTER_SPEED:
-      g_value_set_int (value, src->config.shutter_speed);
+      if (src->config.exposure_mode)
+      {
+        gint shutter_speed;
+        if (arducam_get_control(
+          camera_instance, V4L2_CID_EXPOSURE, &shutter_speed))
+        {
+          GST_WARNING_OBJECT(src, "Failed to get current shutter speed.");
+          g_value_set_int (value, src->config.shutter_speed);
+        }
+        else g_value_set_int (value, shutter_speed);
+      }
+      else g_value_set_int (value, src->config.shutter_speed);
       break;
     case PROP_GAIN:
       g_value_set_int (value, src->config.gain);
