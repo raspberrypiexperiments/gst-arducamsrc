@@ -46,7 +46,7 @@ enum
   PROP_SENSOR_MODE,
   PROP_HFLIP,
   PROP_VFLIP,
-  PROP_EXPOSURE,
+  PROP_SHUTTER_SPEED,
   PROP_GAIN,
   PROP_EXTERNAL_TRIGGER,
   PROP_EXPOSURE_MODE,
@@ -57,7 +57,7 @@ enum
 #define HEIGHT_DEFAULT 100
 #define HFLIP_DEFAULT FALSE
 #define VFLIP_DEFAULT FALSE
-#define EXPOSURE_DEFAULT 681
+#define SHUTTER_SPEED_DEFAULT 681
 #define GAIN_DEFAULT 1
 #define EXTERNAL_TRIGGER_DEFAULT FALSE
 #define EXPOSURE_MODE_DEFAULT TRUE
@@ -270,9 +270,9 @@ gst_ardu_cam_src_class_init (GstArduCamSrcClass * klass)
           "Enable or disable vertical image flip", 
           VFLIP_DEFAULT, 
           G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE | G_PARAM_STATIC_STRINGS));
-  g_object_class_install_property (gobject_class, PROP_EXPOSURE,
-      g_param_spec_int ("exposure", "Exposure",
-          "Set or get imager exposure time [us]", 1, 65535, EXPOSURE_DEFAULT, 
+  g_object_class_install_property (gobject_class, PROP_SHUTTER_SPEED,
+      g_param_spec_int ("shutter-speed", "Shutter Speed",
+          "Set or get shutter speed time, in microseconds. (0 = Auto)", 0, 65535, SHUTTER_SPEED_DEFAULT, 
           G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE | G_PARAM_STATIC_STRINGS));
   g_object_class_install_property (gobject_class, PROP_GAIN,
       g_param_spec_int ("gain", "Gain", "Set or get imager gain",
@@ -338,7 +338,7 @@ gst_ardu_cam_src_init (GstArduCamSrc * src)
   src->config.hflip = HFLIP_DEFAULT;
   src->config.vflip = VFLIP_DEFAULT;
   src->sensor_mode = GST_ARDU_CAM_SRC_SENSOR_MODE_AUTOMATIC;
-  src->config.exposure = EXPOSURE_DEFAULT;
+  src->config.shutter_speed = SHUTTER_SPEED_DEFAULT;
   src->config.gain = GAIN_DEFAULT;
   src->config.external_trigger = EXTERNAL_TRIGGER_DEFAULT;
   src->config.exposure_mode = EXPOSURE_MODE_DEFAULT;
@@ -385,9 +385,19 @@ gst_ardu_cam_src_set_property (GObject * object, guint prop_id,
       src->config.vflip = g_value_get_boolean (value);
       src->config.change_flags |= PROP_CHANGE_VFLIP;
       break;
-    case PROP_EXPOSURE:
-      src->config.exposure = g_value_get_int (value);
-      src->config.change_flags |= PROP_CHANGE_EXPOSURE;
+    case PROP_SHUTTER_SPEED:
+      src->config.shutter_speed = g_value_get_int (value);
+      if (src->config.shutter_speed == 0)
+      {
+        src->config.exposure_mode = TRUE;
+        src->config.change_flags |= PROP_CHANGE_EXPOSURE_MODE;
+      }
+      else
+      { 
+        src->config.exposure_mode = FALSE;
+        src->config.change_flags |= PROP_CHANGE_EXPOSURE_MODE;
+        src->config.change_flags |= PROP_CHANGE_SHUTTER_SPEED;
+      }
       break;
     case PROP_GAIN:
       src->config.gain = g_value_get_int (value);
@@ -443,8 +453,8 @@ gst_ardu_cam_src_get_property (GObject * object, guint prop_id,
     case PROP_VFLIP:
       g_value_set_boolean (value, src->config.vflip);
       break;
-    case PROP_EXPOSURE:
-      g_value_set_int (value, src->config.exposure);
+    case PROP_SHUTTER_SPEED:
+      g_value_set_int (value, src->config.shutter_speed);
       break;
     case PROP_GAIN:
       g_value_set_int (value, src->config.gain);
@@ -506,10 +516,20 @@ gst_ardu_cam_src_create (GstPushSrc * parent, GstBuffer ** buf)
         GST_WARNING_OBJECT (src, "Could not set vflip");
       }
     }
-    if (src->config.change_flags & PROP_CHANGE_EXPOSURE)
+    //NOTE(marcin.sielski):Exposure Mode shall be set before Shutter Speed
+    //otherwise if shutter speed is set it may be overwrittern by auto mode
+    if (src->config.change_flags & PROP_CHANGE_EXPOSURE_MODE)
+    {
+      if (arducam_software_auto_exposure (camera_instance, 
+        src->config.exposure_mode)) 
+      {
+        GST_WARNING_OBJECT (src, "Could not set auto exposure mode");
+      }
+    }
+    if (src->config.change_flags & PROP_CHANGE_SHUTTER_SPEED)
     {
       if (arducam_set_control (camera_instance, V4L2_CID_EXPOSURE, 
-        src->config.exposure)) 
+        src->config.shutter_speed)) 
       {
         GST_WARNING_OBJECT (src, "Could not set exposure");
       }
@@ -520,14 +540,6 @@ gst_ardu_cam_src_create (GstPushSrc * parent, GstBuffer ** buf)
         src->config.gain)) 
       {
         GST_WARNING_OBJECT (src, "Could not set gain");
-      }
-    }
-    if (src->config.change_flags & PROP_CHANGE_EXPOSURE_MODE)
-    {
-      if (arducam_software_auto_exposure (camera_instance, 
-        src->config.exposure_mode)) 
-      {
-        GST_WARNING_OBJECT (src, "Could not set auto exposure mode");
       }
     }
     src->config.change_flags = 0;

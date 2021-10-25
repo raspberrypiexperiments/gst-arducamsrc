@@ -49,7 +49,7 @@ typedef enum
 {
   PROP_CHANGE_VFLIP            = (1 << 0),
   PROP_CHANGE_HFLIP            = (1 << 1),
-  PROP_CHANGE_EXPOSURE         = (1 << 2),
+  PROP_CHANGE_SHUTTER_SPEED    = (1 << 2),
   PROP_CHANGE_GAIN             = (1 << 3),
   PROP_CHANGE_EXTERNAL_TRIGGER = (1 << 4),
   PROP_CHANGE_EXPOSURE_MODE    = (1 << 5),
@@ -61,7 +61,7 @@ typedef struct
   ArduCamPropChangeFlags change_flags;
   gboolean hflip;
   gboolean vflip;
-  gint exposure;
+  gint shutter_speed;
   gint gain;
   gboolean external_trigger;
   gboolean exposure_mode;
