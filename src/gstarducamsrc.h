@@ -53,6 +53,7 @@ typedef enum
   PROP_CHANGE_GAIN             = (1 << 3),
   PROP_CHANGE_EXTERNAL_TRIGGER = (1 << 4),
   PROP_CHANGE_EXPOSURE_MODE    = (1 << 5),
+  PROP_CHANGE_AWB              = (1 << 6)
 } ArduCamPropChangeFlags;
 
 typedef struct
@@ -66,6 +67,7 @@ typedef struct
   gboolean external_trigger;
   gboolean exposure_mode;
   gint timeout;
+  gint awb;
 }
 ArduCamConfig;
 
@@ -73,7 +75,7 @@ struct _GstArduCamSrc
 {
   GstPushSrc parent;
 
-  gchar name[16];
+  gchar name[7]; // 'ov' (2) + four digits (4) + NULL (1) = name (7)
   gint width;
   gint height;
   gint sensor_mode;

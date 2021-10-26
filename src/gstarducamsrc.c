@@ -50,7 +50,8 @@ enum
   PROP_GAIN,
   PROP_EXTERNAL_TRIGGER,
   PROP_EXPOSURE_MODE,
-  PROP_TIMEOUT
+  PROP_TIMEOUT,
+  PROP_AWB
 };
 
 #define WIDTH_DEFAULT 160
@@ -63,6 +64,7 @@ enum
 #define EXPOSURE_MODE_DEFAULT TRUE
 #define ROTATION_DEFAULT 0
 #define TIMEOUT_DEFAULT 3000
+#define AWB_DEFAULT 4
 
 /* the capabilities of the inputs and outputs.
  *
@@ -247,27 +249,27 @@ gst_ardu_cam_src_class_init (GstArduCamSrcClass * klass)
   pushsrc_class->create = gst_ardu_cam_src_create;  
 
   g_object_class_install_property (gobject_class, PROP_SENSOR_NAME,
-      g_param_spec_string ("sensor-name", "Sensor Name", "Gets sensor name",
+      g_param_spec_string ("sensor-name", "Sensor Name", "Get sensor name.",
           NULL, G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
   g_object_class_install_property (gobject_class, PROP_WIDTH,
-      g_param_spec_int ("width", "Width", "Get image width",
+      g_param_spec_int ("width", "Width", "Get image width.",
           160, 1280, WIDTH_DEFAULT, G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
   g_object_class_install_property (gobject_class, PROP_HEIGHT,
-      g_param_spec_int ("height", "Height", "Get image height",
+      g_param_spec_int ("height", "Height", "Get image height.",
           100, 800, HEIGHT_DEFAULT, G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
   g_object_class_install_property (gobject_class, PROP_SENSOR_MODE,
-      g_param_spec_enum ("sensor-mode", "Sesnor Mode", "Get sensor mode",
+      g_param_spec_enum ("sensor-mode", "Sesnor Mode", "Get sensor mode.",
           gst_ardu_cam_src_sensor_mode_get_type(), 
           GST_ARDU_CAM_SRC_SENSOR_MODE_AUTOMATIC,
           G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
   g_object_class_install_property (gobject_class, PROP_HFLIP,
       g_param_spec_boolean ("hflip", "HFlip", 
-          "Enable or disable horizontal image flip", 
+          "Enable or disable horizontal image flip.", 
           HFLIP_DEFAULT, 
           G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE | G_PARAM_STATIC_STRINGS));
   g_object_class_install_property (gobject_class, PROP_VFLIP,
       g_param_spec_boolean ("vflip", "VFlip", 
-          "Enable or disable vertical image flip", 
+          "Enable or disable vertical image flip.", 
           VFLIP_DEFAULT, 
           G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE | G_PARAM_STATIC_STRINGS));
   g_object_class_install_property (gobject_class, PROP_SHUTTER_SPEED,
@@ -276,22 +278,26 @@ gst_ardu_cam_src_class_init (GstArduCamSrcClass * klass)
           0, 65535, SHUTTER_SPEED_DEFAULT, 
           G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE | G_PARAM_STATIC_STRINGS));
   g_object_class_install_property (gobject_class, PROP_GAIN,
-      g_param_spec_int ("gain", "Gain", "Set or get imager gain",
+      g_param_spec_int ("gain", "Gain", "Set or get imager gain.",
           0, 15, GAIN_DEFAULT, 
           G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE | G_PARAM_STATIC_STRINGS));
   g_object_class_install_property (gobject_class, PROP_EXTERNAL_TRIGGER,
-      g_param_spec_boolean ("external-trigger", "External Trigger Mode", 
+      g_param_spec_boolean ("external-trigger", "External Trigger Mode.", 
           "Enable or disable external trigger mode", 
           EXTERNAL_TRIGGER_DEFAULT, 
           G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE | G_PARAM_STATIC_STRINGS));
   g_object_class_install_property (gobject_class, PROP_EXPOSURE_MODE,
       g_param_spec_boolean ("exposure-mode", "Auto Exposure Mode", 
-          "Enable or disable software auto exposure mode", 
+          "Enable or disable software auto exposure mode.", 
           EXPOSURE_MODE_DEFAULT, 
           G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE | G_PARAM_STATIC_STRINGS));
   g_object_class_install_property (gobject_class, PROP_TIMEOUT,
-      g_param_spec_int ("timeout", "Timeout", "Set or get frame capture timeout",
-          0, G_MAXINT, TIMEOUT_DEFAULT, 
+      g_param_spec_int ("timeout", "Timeout", 
+          "Set or get frame capture timeout.", 0, G_MAXINT, TIMEOUT_DEFAULT, 
+          G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE | G_PARAM_STATIC_STRINGS));
+  g_object_class_install_property (gobject_class, PROP_AWB,
+      g_param_spec_int ("awb", "Auto White Balance", 
+          "Set or get auto wihite balance. (-1 = Auto) ", -1, 15, AWB_DEFAULT, 
           G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE | G_PARAM_STATIC_STRINGS));
 
     atexit (gst_ardu_cam_src_atexit);
@@ -311,25 +317,25 @@ gst_ardu_cam_src_init (GstArduCamSrc * src)
 
   if (!camera_instance)
   {
-    gint stdout_bk;
-    stdout_bk = dup (fileno (stderr));
-    gint pipefd[2];
-    pipe2 (pipefd, 0);
-    dup2 (pipefd[1], fileno (stderr));
-    arducam_init_camera (&camera_instance);
-    fflush (stderr);
-    close (pipefd[1]);
-    dup2 (stdout_bk, fileno (stderr));
-    gchar ch = 0;
-    gint i = 0;
-    do {
-      read (pipefd[0], &ch, 1);
-      if (i >= 13) {
-        src->name[i-13] = ch;
-      }
-      i++;
-    } while(!(ch == ' ' && i > 13 && i < 30));
-    src->name[i-13-1] = 0;
+    if (arducam_init_camera (&camera_instance)) 
+    {
+      GST_ERROR_OBJECT(src, "Failed to initialize the camera");
+      return;
+    }
+    src->name[0] = 'o';
+    src->name[1] = 'v';
+    guint16 value = 0;
+    if (arducam_read_sensor_reg(camera_instance, 0x300A, &value)) 
+    {
+      GST_WARNING_OBJECT(src, "Failed to read camera id");
+    }
+    sprintf(src->name+2, "%x", value);
+    if (arducam_read_sensor_reg(camera_instance, 0x300B, &value))
+    {
+      GST_WARNING_OBJECT(src, "Failed to read camera id");
+    }
+    sprintf(src->name+4, "%x", value);
+    src->name[6] = 0;
   }
 
   src->width = WIDTH_DEFAULT;
@@ -344,6 +350,7 @@ gst_ardu_cam_src_init (GstArduCamSrc * src)
   src->config.external_trigger = EXTERNAL_TRIGGER_DEFAULT;
   src->config.exposure_mode = EXPOSURE_MODE_DEFAULT;
   src->config.timeout = TIMEOUT_DEFAULT;
+  src->config.awb = AWB_DEFAULT;
 
   src->config.change_flags |= PROP_CHANGE_EXPOSURE_MODE;
 
@@ -417,13 +424,18 @@ gst_ardu_cam_src_set_property (GObject * object, guint prop_id,
         if (arducam_get_control(
           camera_instance, V4L2_CID_EXPOSURE, &shutter_speed))
         {
-          GST_WARNING_OBJECT(src, "Failed to get current shutter speed.");
+          GST_WARNING_OBJECT(src, "Failed to get current shutter speed");
         }
         else src->config.shutter_speed = shutter_speed;
       }
       break;
     case PROP_TIMEOUT:
       src->config.timeout = g_value_get_int (value);
+      break;
+    case PROP_AWB:
+      src->config.awb = g_value_get_int (value);
+      src->config.change_flags |= PROP_CHANGE_AWB;
+      break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
@@ -489,6 +501,9 @@ gst_ardu_cam_src_get_property (GObject * object, guint prop_id,
       break;
     case PROP_TIMEOUT:
       g_value_set_int (value, src->config.timeout);
+      break;
+    case PROP_AWB:
+      g_value_set_int (value, src->config.awb);
       break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -562,6 +577,38 @@ gst_ardu_cam_src_create (GstPushSrc * parent, GstBuffer ** buf)
         src->config.gain)) 
       {
         GST_WARNING_OBJECT (src, "Could not set gain");
+      }
+    }
+    if (src->config.change_flags & PROP_CHANGE_AWB)
+    {
+      if (src->config.awb == -1)
+      {
+        if (arducam_write_sensor_reg(camera_instance, 0x3406, 0x0))
+        {
+          GST_WARNING_OBJECT (src, "Could not enable auto white balance");
+        }
+      }
+      else
+      {
+        if (arducam_write_sensor_reg(camera_instance, 0x3400, src->config.awb))
+        {
+          GST_WARNING_OBJECT (
+            src, "Could not set white balance for red channel");
+        }
+        if (arducam_write_sensor_reg(camera_instance, 0x3402, src->config.awb))
+        {
+          GST_WARNING_OBJECT (
+            src, "Could not set white balance for green channel");
+        }
+        if (arducam_write_sensor_reg(camera_instance, 0x3404, src->config.awb))
+        {
+          GST_WARNING_OBJECT (
+            src, "Could not set white balance for blue channel");
+        }
+        if (arducam_write_sensor_reg(camera_instance, 0x3406, 0x1))
+        {
+          GST_WARNING_OBJECT (src, "Could not enable manual white balance");
+        }       
       }
     }
     src->config.change_flags = 0;
