@@ -41,6 +41,7 @@ enum
 {
   PROP_0,
   PROP_SENSOR_NAME,
+  PROP_SENSOR_REVISION,
   PROP_WIDTH,
   PROP_HEIGHT,
   PROP_SENSOR_MODE,
@@ -251,6 +252,10 @@ gst_ardu_cam_src_class_init (GstArduCamSrcClass * klass)
   g_object_class_install_property (gobject_class, PROP_SENSOR_NAME,
       g_param_spec_string ("sensor-name", "Sensor Name", "Get sensor name.",
           NULL, G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
+  g_object_class_install_property (gobject_class, PROP_SENSOR_REVISION,
+      g_param_spec_string ("sensor-revision", "Sensor Revision", 
+          "Get sensor revision.", NULL, 
+          G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
   g_object_class_install_property (gobject_class, PROP_WIDTH,
       g_param_spec_int ("width", "Width", "Get image width.",
           160, 1280, WIDTH_DEFAULT, G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
@@ -336,6 +341,12 @@ gst_ardu_cam_src_init (GstArduCamSrc * src)
     }
     sprintf(src->name+4, "%x", value);
     src->name[6] = 0;
+    if (arducam_read_sensor_reg(camera_instance, 0x300C, &value))
+    {
+      GST_WARNING_OBJECT(src, "Failed to read revision id");
+    }
+    sprintf(src->revision, "%x", value);
+    src->revision[2] = 0;
   }
 
   src->width = WIDTH_DEFAULT;
@@ -460,6 +471,9 @@ gst_ardu_cam_src_get_property (GObject * object, guint prop_id,
   switch (prop_id) {
     case PROP_SENSOR_NAME:
       g_value_set_string (value, src->name);
+      break;
+    case PROP_SENSOR_REVISION:
+      g_value_set_string (value, src->revision);
       break;
     case PROP_WIDTH:
       g_value_set_int (value, src->width);

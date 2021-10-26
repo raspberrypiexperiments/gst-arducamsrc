@@ -75,7 +75,8 @@ struct _GstArduCamSrc
 {
   GstPushSrc parent;
 
-  gchar name[7]; // 'ov' (2) + four digits (4) + NULL (1) = name (7)
+  gchar name[7];     // 'ov' (2) + four digits (4) + NULL (1) = name (7)
+  gchar revision[5]; // rev (2) + NULL (1) + padding (2) = revision (5)
   gint width;
   gint height;
   gint sensor_mode;
