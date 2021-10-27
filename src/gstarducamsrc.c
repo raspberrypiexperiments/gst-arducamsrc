@@ -60,12 +60,10 @@ enum
 #define HFLIP_DEFAULT FALSE
 #define VFLIP_DEFAULT FALSE
 #define SHUTTER_SPEED_DEFAULT 681
-#define GAIN_DEFAULT 1
 #define EXTERNAL_TRIGGER_DEFAULT FALSE
 #define EXPOSURE_MODE_DEFAULT TRUE
 #define ROTATION_DEFAULT 0
-#define TIMEOUT_DEFAULT 3000
-#define AWB_DEFAULT 4
+#define TIMEOUT_DEFAULT 5000
 
 /* the capabilities of the inputs and outputs.
  *
@@ -112,7 +110,9 @@ GType
 gst_ardu_cam_src_sensor_mode_get_type (void)
 {
   static const GEnumValue values[] = {
-    {C_ENUM (GST_ARDU_CAM_SRC_SENSOR_MODE_AUTOMATIC), "AUTOMATIC", "automatic"},
+    {C_ENUM (GST_ARDU_CAM_SRC_SENSOR_MODE_AUTOMATIC), 
+        "GST_ARDU_CAM_SRC_SENSOR_MODE_AUTOMATIC", 
+        "automatic"},
     {C_ENUM (GST_ARDU_CAM_SRC_SENSOR_MODE_1280x800_GREY_60FPS_1LANE), 
         "GST_ARDU_CAM_SRC_SENSOR_MODE_1280x800_GREY_60FPS_1LANE",
         "1280x800 GREY 60fps 1lane"},
@@ -194,6 +194,140 @@ gst_ardu_cam_src_sensor_mode_get_type (void)
 
   return id;
 }
+
+GType
+gst_ardu_cam_src_gain_get_type (void)
+{
+  static const GEnumValue values[] = {
+    {C_ENUM (GST_ARDU_CAM_SRC_GAIN_0X), 
+        "GST_ARDU_CAM_SRC_GAIN_0X",
+        "0x gain"},
+    {C_ENUM (GST_ARDU_CAM_SRC_GAIN_1X),
+        "GST_ARDU_CAM_SRC_GAIN_1X",
+        "1x gain"},
+    {C_ENUM (GST_ARDU_CAM_SRC_GAIN_2X),
+        "GST_ARDU_CAM_SRC_GAIN_2X", 
+        "2x gain"},
+    {C_ENUM (GST_ARDU_CAM_SRC_GAIN_3X),
+        "GST_ARDU_CAM_SRC_GAIN_3X", 
+        "3x gain"},
+    {C_ENUM (GST_ARDU_CAM_SRC_GAIN_4X),
+        "GST_ARDU_CAM_SRC_GAIN_4X", 
+        "4x gain"},
+    {C_ENUM (GST_ARDU_CAM_SRC_GAIN_5X),
+        "GST_ARDU_CAM_SRC_GAIN_5X", 
+        "5x gain"},
+    {C_ENUM (GST_ARDU_CAM_SRC_GAIN_6X),
+        "GST_ARDU_CAM_SRC_GAIN_6X", 
+        "6x gain"},
+    {C_ENUM (GST_ARDU_CAM_SRC_GAIN_7X),
+        "GST_ARDU_CAM_SRC_GAIN_7X", 
+        "7x gain"},
+    {C_ENUM (GST_ARDU_CAM_SRC_GAIN_8X),
+        "GST_ARDU_CAM_SRC_GAIN_8X", 
+        "8x gain"},
+    {C_ENUM (GST_ARDU_CAM_SRC_GAIN_9X),
+        "GST_ARDU_CAM_SRC_GAIN_9X", 
+        "9x gain"},
+    {C_ENUM (GST_ARDU_CAM_SRC_GAIN_10X),
+        "GST_ARDU_CAM_SRC_GAIN_10X", 
+        "10x gain"},
+    {C_ENUM (GST_ARDU_CAM_SRC_GAIN_11X),
+        "GST_ARDU_CAM_SRC_GAIN_11X", 
+        "11x gain"},
+    {C_ENUM (GST_ARDU_CAM_SRC_GAIN_12X),
+        "GST_ARDU_CAM_SRC_GAIN_12X", 
+        "12x gain"},
+    {C_ENUM (GST_ARDU_CAM_SRC_GAIN_13X),
+        "GST_ARDU_CAM_SRC_GAIN_13X", 
+        "13x gain"},
+    {C_ENUM (GST_ARDU_CAM_SRC_GAIN_14X),
+        "GST_ARDU_CAM_SRC_GAIN_14X", 
+        "14x gain"},
+    {C_ENUM (GST_ARDU_CAM_SRC_GAIN_15X),
+        "GST_ARDU_CAM_SRC_GAIN_15X", 
+        "15x gain"},
+    {0, NULL, NULL}
+  };
+
+  static volatile GType id = 0;
+  if (g_once_init_enter ((gsize *) & id)) {
+    GType _id;
+    _id = g_enum_register_static ("GstArduCamSrcGain", values);
+    g_once_init_leave ((gsize *) & id, _id);
+  }
+
+  return id;
+}
+
+GType
+gst_ardu_cam_src_awb_get_type (void)
+{
+  static const GEnumValue values[] = {
+    {C_ENUM (GST_ARDU_CAM_SRC_AWB_AUTOMATIC), 
+        "GST_ARDU_CAM_SRC_AWB_AUTOMATIC",
+        "automatic"},
+    {C_ENUM (GST_ARDU_CAM_SRC_AWB_0_00X), 
+        "GST_ARDU_CAM_SRC_AWB_0_00X",
+        "0.00x white balance"},
+    {C_ENUM (GST_ARDU_CAM_SRC_AWB_0_25X),
+        "GST_ARDU_CAM_SRC_AWB_0_25X",
+        "0.25x white balance"},
+    {C_ENUM (GST_ARDU_CAM_SRC_AWB_0_50X),
+        "GST_ARDU_CAM_SRC_AWB_0_50X", 
+        "0.50x white balance"},
+    {C_ENUM (GST_ARDU_CAM_SRC_AWB_0_75X),
+        "GST_ARDU_CAM_SRC_AWB_0_75X", 
+        "0.75x white balance"},
+    {C_ENUM (GST_ARDU_CAM_SRC_AWB_1_00X),
+        "GST_ARDU_CAM_SRC_AWB_1_00X", 
+        "1.00x white balance"},
+    {C_ENUM (GST_ARDU_CAM_SRC_AWB_1_25X),
+        "GST_ARDU_CAM_SRC_AWB_1_25X", 
+        "1.25x white balance"},
+    {C_ENUM (GST_ARDU_CAM_SRC_AWB_1_50X),
+        "GST_ARDU_CAM_SRC_AWB_1_50X", 
+        "1.50x white balance"},
+    {C_ENUM (GST_ARDU_CAM_SRC_AWB_1_75X),
+        "GST_ARDU_CAM_SRC_AWB_1_75X", 
+        "1.75x white balance"},
+    {C_ENUM (GST_ARDU_CAM_SRC_AWB_2_00X),
+        "GST_ARDU_CAM_SRC_AWB_2_00X", 
+        "2.00x white balance"},
+    {C_ENUM (GST_ARDU_CAM_SRC_AWB_2_25X),
+        "GST_ARDU_CAM_SRC_AWB_2_25X", 
+        "2.25x white balance"},
+    {C_ENUM (GST_ARDU_CAM_SRC_AWB_2_50X),
+        "GST_ARDU_CAM_SRC_AWB_2_50X", 
+        "2.50x white balance"},
+    {C_ENUM (GST_ARDU_CAM_SRC_AWB_2_75X),
+        "GST_ARDU_CAM_SRC_AWB_2_75X", 
+        "2.75x white balance"},
+    {C_ENUM (GST_ARDU_CAM_SRC_AWB_3_00X),
+        "GST_ARDU_CAM_SRC_AWB_3_00X", 
+        "3.00x white balance"},
+    {C_ENUM (GST_ARDU_CAM_SRC_AWB_3_25X),
+        "GST_ARDU_CAM_SRC_AWB_3_25X", 
+        "3.25x white balance"},
+    {C_ENUM (GST_ARDU_CAM_SRC_AWB_3_50X),
+        "GST_ARDU_CAM_SRC_AWB_3_50X", 
+        "3.50x white balance"},
+    {C_ENUM (GST_ARDU_CAM_SRC_AWB_3_75X),
+        "GST_ARDU_CAM_SRC_AWB_3_75X", 
+        "3.75x white balance"},
+    {0, NULL, NULL}
+  };
+
+  static volatile GType id = 0;
+  if (g_once_init_enter ((gsize *) & id)) {
+    GType _id;
+    _id = g_enum_register_static ("GstArduCamSrcAWB", values);
+    g_once_init_leave ((gsize *) & id, _id);
+  }
+
+  return id;
+}
+
 
 static IMAGE_FORMAT image_format = {IMAGE_ENCODING_RAW_BAYER, 100};
 static CAMERA_INSTANCE camera_instance = NULL;
@@ -283,8 +417,8 @@ gst_ardu_cam_src_class_init (GstArduCamSrcClass * klass)
           0, 65535, SHUTTER_SPEED_DEFAULT, 
           G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE | G_PARAM_STATIC_STRINGS));
   g_object_class_install_property (gobject_class, PROP_GAIN,
-      g_param_spec_int ("gain", "Gain", "Set or get imager gain.",
-          0, 15, GAIN_DEFAULT, 
+      g_param_spec_enum ("gain", "Gain", "Set or get imager gain.",
+          gst_ardu_cam_src_gain_get_type(), GST_ARDU_CAM_SRC_GAIN_1X, 
           G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE | G_PARAM_STATIC_STRINGS));
   g_object_class_install_property (gobject_class, PROP_EXTERNAL_TRIGGER,
       g_param_spec_boolean ("external-trigger", "External Trigger Mode.", 
@@ -301,8 +435,9 @@ gst_ardu_cam_src_class_init (GstArduCamSrcClass * klass)
           "Set or get frame capture timeout.", 0, G_MAXINT, TIMEOUT_DEFAULT, 
           G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE | G_PARAM_STATIC_STRINGS));
   g_object_class_install_property (gobject_class, PROP_AWB,
-      g_param_spec_int ("awb", "Auto White Balance", 
-          "Set or get auto wihite balance. (-1 = Auto) ", -1, 15, AWB_DEFAULT, 
+      g_param_spec_enum ("awb", "Auto White Balance", 
+          "Set or get auto wihite balance.", gst_ardu_cam_src_awb_get_type(),
+          GST_ARDU_CAM_SRC_AWB_1_00X, 
           G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE | G_PARAM_STATIC_STRINGS));
 
     atexit (gst_ardu_cam_src_atexit);
@@ -357,11 +492,11 @@ gst_ardu_cam_src_init (GstArduCamSrc * src)
   src->config.vflip = VFLIP_DEFAULT;
   src->sensor_mode = GST_ARDU_CAM_SRC_SENSOR_MODE_AUTOMATIC;
   src->config.shutter_speed = SHUTTER_SPEED_DEFAULT;
-  src->config.gain = GAIN_DEFAULT;
+  src->config.gain = GST_ARDU_CAM_SRC_GAIN_1X;
   src->config.external_trigger = EXTERNAL_TRIGGER_DEFAULT;
   src->config.exposure_mode = EXPOSURE_MODE_DEFAULT;
   src->config.timeout = TIMEOUT_DEFAULT;
-  src->config.awb = AWB_DEFAULT;
+  src->config.awb = GST_ARDU_CAM_SRC_AWB_1_00X;
 
   src->config.change_flags |= PROP_CHANGE_EXPOSURE_MODE;
 
@@ -419,7 +554,7 @@ gst_ardu_cam_src_set_property (GObject * object, guint prop_id,
       }
       break;
     case PROP_GAIN:
-      src->config.gain = g_value_get_int (value);
+      src->config.gain = g_value_get_enum (value);
       src->config.change_flags |= PROP_CHANGE_GAIN;
       break;
     case PROP_EXTERNAL_TRIGGER:
@@ -444,7 +579,7 @@ gst_ardu_cam_src_set_property (GObject * object, guint prop_id,
       src->config.timeout = g_value_get_int (value);
       break;
     case PROP_AWB:
-      src->config.awb = g_value_get_int (value);
+      src->config.awb = g_value_get_enum (value);
       src->config.change_flags |= PROP_CHANGE_AWB;
       break;
     default:
@@ -505,7 +640,7 @@ gst_ardu_cam_src_get_property (GObject * object, guint prop_id,
       else g_value_set_int (value, src->config.shutter_speed);
       break;
     case PROP_GAIN:
-      g_value_set_int (value, src->config.gain);
+      g_value_set_enum (value, src->config.gain);
       break;
     case PROP_EXTERNAL_TRIGGER:
       g_value_set_boolean (value, src->config.external_trigger);
@@ -517,7 +652,7 @@ gst_ardu_cam_src_get_property (GObject * object, guint prop_id,
       g_value_set_int (value, src->config.timeout);
       break;
     case PROP_AWB:
-      g_value_set_int (value, src->config.awb);
+      g_value_set_enum (value, src->config.awb);
       break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -604,6 +739,11 @@ gst_ardu_cam_src_create (GstPushSrc * parent, GstBuffer ** buf)
       }
       else
       {
+        //NOTE(marcin.sielski):Manual white balace has to be enabled first
+        if (arducam_write_sensor_reg(camera_instance, 0x3406, 0x1))
+        {
+          GST_WARNING_OBJECT (src, "Could not enable manual white balance");
+        }       
         if (arducam_write_sensor_reg(camera_instance, 0x3400, src->config.awb))
         {
           GST_WARNING_OBJECT (
@@ -619,10 +759,6 @@ gst_ardu_cam_src_create (GstPushSrc * parent, GstBuffer ** buf)
           GST_WARNING_OBJECT (
             src, "Could not set white balance for blue channel");
         }
-        if (arducam_write_sensor_reg(camera_instance, 0x3406, 0x1))
-        {
-          GST_WARNING_OBJECT (src, "Could not enable manual white balance");
-        }       
       }
     }
     src->config.change_flags = 0;

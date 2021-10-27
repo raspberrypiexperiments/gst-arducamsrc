@@ -56,40 +56,6 @@ typedef enum
   PROP_CHANGE_AWB              = (1 << 6)
 } ArduCamPropChangeFlags;
 
-typedef struct
-{
-  GMutex lock;
-  ArduCamPropChangeFlags change_flags;
-  gboolean hflip;
-  gboolean vflip;
-  gint shutter_speed;
-  gint gain;
-  gboolean external_trigger;
-  gboolean exposure_mode;
-  gint timeout;
-  gint awb;
-}
-ArduCamConfig;
-
-struct _GstArduCamSrc
-{
-  GstPushSrc parent;
-
-  gchar name[7];     // 'ov' (2) + four digits (4) + NULL (1) = name (7)
-  gchar revision[5]; // rev (2) + NULL (1) + padding (2) = revision (5)
-  gint width;
-  gint height;
-  gint sensor_mode;
-  ArduCamConfig config;
-};
-
-struct _GstArduCamSrcClass 
-{
-  GstPushSrcClass parent_class;
-};
-
-GType gst_ardu_cam_src_get_type (void);
-
 typedef enum {
   GST_ARDU_CAM_SRC_SENSOR_MODE_AUTOMATIC = -1,
   GST_ARDU_CAM_SRC_SENSOR_MODE_1280x800_GREY_60FPS_1LANE = 0,
@@ -115,7 +81,90 @@ typedef enum {
   GST_ARDU_CAM_SRC_SENSOR_MODE_160x100_BA81_480FPS_1LANE = 20,
   GST_ARDU_CAM_SRC_SENSOR_MODE_1280x800_BA81_480FPS_2LANES = 21,
   GST_ARDU_CAM_SRC_SENSOR_MODE_1280x800_pBAA_480FPS_1LANE = 22,
-} GstRpiCamSrcSensorMode;
+} 
+GstArduCamSrcSensorMode;
+
+GType gst_ardu_cam_src_sensor_mode_get_type (void);
+
+typedef enum {
+  GST_ARDU_CAM_SRC_GAIN_0X = 0,
+  GST_ARDU_CAM_SRC_GAIN_1X = 1,
+  GST_ARDU_CAM_SRC_GAIN_2X = 2,
+  GST_ARDU_CAM_SRC_GAIN_3X = 3,
+  GST_ARDU_CAM_SRC_GAIN_4X = 4,
+  GST_ARDU_CAM_SRC_GAIN_5X = 5,
+  GST_ARDU_CAM_SRC_GAIN_6X = 6,
+  GST_ARDU_CAM_SRC_GAIN_7X = 7,
+  GST_ARDU_CAM_SRC_GAIN_8X = 8,
+  GST_ARDU_CAM_SRC_GAIN_9X = 9,
+  GST_ARDU_CAM_SRC_GAIN_10X = 10,
+  GST_ARDU_CAM_SRC_GAIN_11X = 11,
+  GST_ARDU_CAM_SRC_GAIN_12X = 12,
+  GST_ARDU_CAM_SRC_GAIN_13X = 13,
+  GST_ARDU_CAM_SRC_GAIN_14X = 14,
+  GST_ARDU_CAM_SRC_GAIN_15X = 15,
+} 
+GstArduCamSrcGain;
+
+GType gst_ardu_cam_src_gain_get_type (void);
+
+typedef enum {
+  GST_ARDU_CAM_SRC_AWB_AUTOMATIC = -1,
+  GST_ARDU_CAM_SRC_AWB_0_00X = 0,
+  GST_ARDU_CAM_SRC_AWB_0_25X = 1,
+  GST_ARDU_CAM_SRC_AWB_0_50X = 2,
+  GST_ARDU_CAM_SRC_AWB_0_75X = 3,
+  GST_ARDU_CAM_SRC_AWB_1_00X = 4,
+  GST_ARDU_CAM_SRC_AWB_1_25X = 5,
+  GST_ARDU_CAM_SRC_AWB_1_50X = 6,
+  GST_ARDU_CAM_SRC_AWB_1_75X = 7,
+  GST_ARDU_CAM_SRC_AWB_2_00X = 8,
+  GST_ARDU_CAM_SRC_AWB_2_25X = 9,
+  GST_ARDU_CAM_SRC_AWB_2_50X = 10,
+  GST_ARDU_CAM_SRC_AWB_2_75X = 11,
+  GST_ARDU_CAM_SRC_AWB_3_00X = 12,
+  GST_ARDU_CAM_SRC_AWB_3_25X = 13,
+  GST_ARDU_CAM_SRC_AWB_3_50X = 14,
+  GST_ARDU_CAM_SRC_AWB_3_75X = 15,
+} 
+GstArduCamSrcAWB;
+
+GType gst_ardu_cam_src_awb_get_type (void);
+
+typedef struct
+{
+  GMutex lock;
+  ArduCamPropChangeFlags change_flags;
+  gboolean hflip;
+  gboolean vflip;
+  gint shutter_speed;
+  GstArduCamSrcGain gain;
+  gboolean external_trigger;
+  gboolean exposure_mode;
+  gint timeout;
+  GstArduCamSrcAWB awb;
+}
+ArduCamConfig;
+
+struct _GstArduCamSrc
+{
+  GstPushSrc parent;
+
+  gchar name[7];     // 'ov' (2) + four digits (4) + NULL (1) = name (7)
+  gchar revision[5]; // rev (2) + NULL (1) + padding (2) = revision (5)
+  gint width;
+  gint height;
+  GstArduCamSrcSensorMode sensor_mode;
+  ArduCamConfig config;
+};
+
+struct _GstArduCamSrcClass 
+{
+  GstPushSrcClass parent_class;
+};
+
+GType gst_ardu_cam_src_get_type (void);
+
 
 G_END_DECLS
 
